@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+
+	ignore "github.com/sabhiram/go-gitignore"
 )
 
 type SyncOptions struct {
@@ -26,6 +28,7 @@ type Syncer struct {
 	wg      sync.WaitGroup
 	fileOps chan string
 	logger  zerolog.Logger
+	matcher *ignore.GitIgnore
 }
 
 func NewSyncer(opts *SyncOptions) *Syncer {
@@ -46,11 +49,33 @@ func NewSyncer(opts *SyncOptions) *Syncer {
 		logger = logger.Level(zerolog.InfoLevel)
 	}
 
+	// Load the ignore patterns
+	matcher := loadIgnorePatterns(opts.SourcePath, logger)
+
 	return &Syncer{
 		Options: opts,
 		fileOps: make(chan string),
 		logger:  logger,
+		matcher: matcher,
 	}
+}
+
+// Read .gosyncignore file from source directory and return a list of patterns to ignore.
+func loadIgnorePatterns(sourceDir string, logger zerolog.Logger) *ignore.GitIgnore {
+	ignoreFilePath := filepath.Join(sourceDir, ".gosyncignore")
+
+	// Check if the file exists
+	if _, err := os.Stat(ignoreFilePath); os.IsNotExist(err) {
+		return nil // Return nil if file don't exist
+	}
+
+	matcher, err := ignore.CompileIgnoreFile(ignoreFilePath)
+	if err != nil {
+		logger.Error().Err(err).Str("path", ignoreFilePath).Msg("Error reading .gosyncignore file")
+		return nil
+	}
+
+	return matcher
 }
 
 func (s *Syncer) worker() {
@@ -201,6 +226,13 @@ func (s *Syncer) Start() error {
 		relPath, _ := filepath.Rel(s.Options.SourcePath, path)
 		if relPath == "." {
 			return nil // Skip root
+		}
+
+		// Check against ignore patterns
+		if s.matcher != nil && s.matcher.MatchesPath(relPath) {
+			s.logger.Debug().Str("action", "IGNORE").Str("path", relPath).Msg("Path matched .gosyncignore rule, skipping")
+
+			return nil
 		}
 
 		sourceFiles[relPath] = true
