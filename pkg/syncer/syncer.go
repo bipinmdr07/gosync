@@ -232,6 +232,11 @@ func (s *Syncer) Start() error {
 		if s.matcher != nil && s.matcher.MatchesPath(relPath) {
 			s.logger.Debug().Str("action", "IGNORE").Str("path", relPath).Msg("Path matched .gosyncignore rule, skipping")
 
+			// Skip directory traversing if directory is ignored
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+
 			return nil
 		}
 
