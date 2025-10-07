@@ -142,7 +142,41 @@ func (s *Syncer) copyFile(srcPath, destinationPath string, srcInfo os.FileInfo) 
 	logEvent.Msg("File copied successfully")
 }
 
-// TODO: Delete extra files in destination function
+// Function to find and remove extra files in destination.
+func (s *Syncer) propagateDeletions(sourceFiles map[string]bool) error {
+	s.logger.Info().Msg("START: Propagating deletions in destination")
+
+	err := filepath.WalkDir(s.Options.DestinationPath, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			s.logger.Error().Err(err).Str("path", path).Msg("Error walking destination directory")
+			return nil
+		}
+
+		relPath, _ := filepath.Rel(s.Options.DestinationPath, path)
+		if relPath == "." {
+			return nil // Skip root
+		}
+
+		// If the file is not in the sourceFiles map, mark it for deletion
+		if _, exists := sourceFiles[relPath]; !exists {
+			logEvent := s.logger.Info().Str("action", "DELETE").Str("path", relPath)
+
+			if !s.Options.DryRun {
+				if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
+					s.logger.Error().Err(rmErr).Str("path", path).Msg("Error deleting file")
+				} else if rmErr == nil {
+					logEvent.Msg("Successfully deleted file")
+				}
+			} else {
+				logEvent.Msg("DRY_RUN: Would delete file")
+			}
+		}
+
+		return nil
+	})
+
+	return err
+}
 
 func (s *Syncer) Start() error {
 	// Check paths
@@ -184,7 +218,10 @@ func (s *Syncer) Start() error {
 	close(s.fileOps)
 	s.wg.Wait()
 
-	// TODO: Handle deletion of extra files in destination if s.Options.Delete is true
+	// Handle deletion propagaton (if enabled)
+	if s.Options.Delete {
+		return s.propagateDeletions(sourceFiles)
+	}
 
 	return err // Return error from WalkDir if any
 }
