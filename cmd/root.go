@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"time"
 
 	"gosync/pkg/syncer"
 
@@ -18,8 +19,6 @@ var rootCmd = &cobra.Command{
 	Long: `gosync is a fast, concurrent CLI utility for one-way synchronization of directories.
 	It intelligently copies only new or modified files from source to destination.`,
 	Run: func(cmd *cobra.Command, args []string) {
-
-		fmt.Print("Hello and over \n")
 		// validate mandatory flags
 		if opts.SourcePath == "" || opts.DestinationPath == "" {
 			cmd.Help()
@@ -27,9 +26,28 @@ var rootCmd = &cobra.Command{
 			os.Exit(1) // Exit after error
 		}
 
+		// new Syncer instance
+		syncerTool := syncer.NewSyncer(opts)
+
 		fmt.Printf("-- Go Sync CLI ---\n")
 		fmt.Printf("Source: %s\n", opts.SourcePath)
 		fmt.Printf("Destination: %s\n", opts.DestinationPath)
+		fmt.Printf("Workers: %d\n", syncerTool.Options.Workers)
+		fmt.Printf("Dry Run: %t\n", opts.DryRun)
+		fmt.Printf("Delete Extra Files: %t\n", opts.Delete)
+		fmt.Printf("-------------------------------------------------- \n")
+
+		startTime := time.Now()
+		err := syncerTool.Start()
+		elapsed := time.Since(startTime)
+
+		// Handle result
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Synchronization failed: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("\n Synchronization completed in %v\n", elapsed)
 
 		os.Exit(0)
 	},
