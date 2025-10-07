@@ -2,6 +2,7 @@ package syncer
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -86,10 +87,60 @@ func (s *Syncer) processFile(srcPath string) {
 	}
 
 	s.logger.Info().Str("action", "COPY_FILE").Str("path", relPath).Str("destination", destinationPath).Msg("Copying file")
-	// TODO: copy new or modified file
+	s.copyFile(srcPath, destinationPath, srcInfo)
 }
 
-// TODO: Copy file function
+// Function to copy files from source to destination, creating directories as needed.
+func (s *Syncer) copyFile(srcPath, destinationPath string, srcInfo os.FileInfo) {
+	relPath, _ := filepath.Rel(s.Options.SourcePath, srcPath)
+	logEvent := s.logger.Info().Str("action", "COPY").Str("path", relPath)
+
+	if s.Options.DryRun {
+		logEvent.Msg("DRY_RUN: Would copy file")
+		return
+	}
+
+	// Create parent directories if they don't exist
+	if err := os.MkdirAll(filepath.Dir(destinationPath), os.ModePerm); err != nil {
+		s.logger.Error().Err(err).Str("path", destinationPath).Msg("Failed to create directories")
+		return
+	}
+
+	// Open source file
+	srcFile, err := os.Open(srcPath)
+	if err != nil {
+		s.logger.Error().Err(err).Str("path", srcPath).Msg("Error opening source file")
+		return
+	}
+	defer srcFile.Close()
+
+	// Create/overwrite destination file
+	destinationFile, err := os.Create(destinationPath)
+	if err != nil {
+		s.logger.Error().Err(err).Str("path", destinationPath).Msg("Error creating destination file")
+		return
+	}
+	defer destinationFile.Close()
+
+	// Copy file contents
+	if _, err := io.Copy(destinationFile, srcFile); err != nil {
+		s.logger.Error().Err(err).Str("path", destinationPath).Msg("Error copying file contents")
+		return
+	}
+
+	// Sync and Preserve modification time
+	destinationFile.Sync()
+	if err := os.Chtimes(destinationPath, time.Now(), srcInfo.ModTime()); err != nil {
+		s.logger.Warn().Err(err).Str("path", destinationPath).Msg("Error preserving modification time")
+	}
+
+	// Set file permissions for source
+	if err := os.Chmod(destinationPath, srcInfo.Mode()); err != nil {
+		s.logger.Warn().Err(err).Str("path", destinationPath).Msg("Error setting file permissions")
+	}
+
+	logEvent.Msg("File copied successfully")
+}
 
 // TODO: Delete extra files in destination function
 
@@ -114,7 +165,6 @@ func (s *Syncer) Start() error {
 		}
 
 		relPath, _ := filepath.Rel(s.Options.SourcePath, path)
-		fmt.Printf("- relPath: %s \n", relPath)
 		if relPath == "." {
 			return nil // Skip root
 		}
